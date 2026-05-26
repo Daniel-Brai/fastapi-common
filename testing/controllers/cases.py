@@ -3,7 +3,8 @@ from typing import Any, Callable, Type
 
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
-from starlette.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from lib.testing.helpers import build_app
 
@@ -45,7 +46,9 @@ class TestControllerCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         if self.controller_class is None:
-            raise NotImplementedError(f"{self.__class__.__name__} must set `controller_class`.")
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set `controller_class`."
+            )
 
         self.app = build_app(self.controller_class)
 
@@ -57,9 +60,6 @@ class TestControllerCase(unittest.IsolatedAsyncioTestCase):
             transport=self._async_transport,
             base_url="http://testserver",
         )
-
-        # Sync client for simple GET/POST tests that don't need await
-        self.sync_client = TestClient(self.app, raise_server_exceptions=True)
 
         await self.client.__aenter__()
 
@@ -122,3 +122,44 @@ class TestControllerCase(unittest.IsolatedAsyncioTestCase):
 
     def assert_server_error(self, response: Any) -> None:
         self.assert_status(response, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class TestControllerIntegrationCase(TestControllerCase):
+    """
+    Base for testing controllers against a real database in integration style.
+    """
+
+    db_engine: AsyncEngine | None = None
+    db_session_factory: Any | None = None
+
+    async def asyncSetUp(self) -> None:
+        if self.db_session_factory is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set `db_session_factory`."
+            )
+        if self.db_engine is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set `db_engine`."
+            )
+
+        await self._clear_tables()
+        await super().asyncSetUp()
+        self.db: AsyncSession = self.db_session_factory()
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await self.db.close()
+        await self.db_session_factory.remove()  # type: ignore
+
+    async def _clear_tables(self) -> None:
+        from sqlalchemy import text
+        from sqlmodel import SQLModel
+
+        assert self.db_engine is not None, "engine must be set to clear tables."
+
+        async with self.db_engine.connect() as conn:
+            for table in reversed(SQLModel.metadata.sorted_tables):
+                await conn.execute(
+                    text(f"TRUNCATE TABLE {table.name} RESTART IDENTITY CASCADE")
+                )
+            await conn.commit()
