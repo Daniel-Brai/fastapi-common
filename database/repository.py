@@ -236,14 +236,18 @@ class Repository[
         Create multiple records in one batch.
         """
 
-        dicts = [obj.model_dump() if isinstance(obj, BaseModel) else obj for obj in objs]
+        dicts = [
+            obj.model_dump() if isinstance(obj, BaseModel) else obj for obj in objs
+        ]
 
         instances = [self._model(**d) for d in dicts]
         self.db.add_all(instances)
         await self.flush()
         return instances
 
-    async def bulk_update(self, ids: list[IDType], data_list: list[dict[str, Any]]) -> int:
+    async def bulk_update(
+        self, ids: list[IDType], data_list: list[dict[str, Any]]
+    ) -> int:
         """
         Update multiple records with different data in one round trip.
 
@@ -262,7 +266,9 @@ class Repository[
         """
 
         if not ids or len(ids) != len(data_list):
-            raise ValueError("ids and data_list must have same length and cannot be empty")
+            raise ValueError(
+                "ids and data_list must have same length and cannot be empty"
+            )
 
         pk_column = self._model.id  # type: ignore[attr-defined]
 
@@ -271,21 +277,20 @@ class Repository[
             update_keys.update(data.keys())
         update_keys = list(update_keys)
 
-        stmt = (
-            update(self._model)
-            .where(pk_column == bindparam("_id"))
-            .values({key: bindparam(key) for key in update_keys})
-        )
+        total_rows = 0
 
-        params = []
         for id_, data in zip(ids, data_list):
-            param = {"id": id_}
-            param.update(data)
-            params.append(param)
+            stmt = (
+                update(self._model)
+                .where(pk_column == id_)
+                .values(**data)
+                .execution_options(synchronize_session=None)
+            )
+            result = await self.db.exec(stmt)
+            total_rows += result.rowcount or 0
 
-        result = await self.db.exec(stmt, params)  # type: ignore
         await self.db.flush()
-        return result.rowcount
+        return total_rows
 
     async def bulk_upsert(
         self,
@@ -302,7 +307,10 @@ class Repository[
         if not objs:
             return []
 
-        dicts = [obj.model_dump(exclude_unset=True) if isinstance(obj, BaseModel) else obj for obj in objs]
+        dicts = [
+            obj.model_dump(exclude_unset=True) if isinstance(obj, BaseModel) else obj
+            for obj in objs
+        ]
 
         model_inspect = sa_inspect(self._model)
 
