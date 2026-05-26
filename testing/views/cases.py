@@ -3,6 +3,8 @@ from typing import Any, Callable, Type
 
 from fastapi import status
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from lib.testing.helpers import build_app
 
@@ -27,7 +29,9 @@ class TestViewCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         if self.view_class is None:
-            raise NotImplementedError(f"{self.__class__.__name__} must set `view_class`.")
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set `view_class`."
+            )
 
         self.app = build_app(self.view_class, **self.get_build_options())
         self.app.dependency_overrides.update(self.get_dependency_overrides())
@@ -91,3 +95,44 @@ class TestViewCase(unittest.IsolatedAsyncioTestCase):
 
     def assert_selector(self, selector: str, count: int | None = None) -> None:
         self.browser.assert_selector(selector, count=count)
+
+
+class TestViewIntegrationCase(TestViewCase):
+    """
+    Base for testing views against a real database in integration style.
+    """
+
+    db_engine: AsyncEngine | None = None
+    db_session_factory: Any | None = None
+
+    async def asyncSetUp(self) -> None:
+        if self.db_session_factory is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set `db_session_factory`."
+            )
+        if self.db_engine is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} must set `db_engine`."
+            )
+
+        await self._clear_tables()
+        await super().asyncSetUp()
+        self.db: AsyncSession = self.db_session_factory()
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await self.db.close()
+        await self.db_session_factory.remove()  # type: ignore
+
+    async def _clear_tables(self) -> None:
+        from sqlalchemy import text
+        from sqlmodel import SQLModel
+
+        assert self.db_engine is not None, "engine must be set to clear tables."
+
+        async with self.db_engine.connect() as conn:
+            for table in reversed(SQLModel.metadata.sorted_tables):
+                await conn.execute(
+                    text(f"TRUNCATE TABLE {table.name} RESTART IDENTITY CASCADE")
+                )
+            await conn.commit()
