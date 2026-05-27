@@ -4,37 +4,18 @@ import redis.asyncio as redis
 
 from lib.logger import get_logger
 from lib.notifications.schemas import VAPIDClaims
-from lib.notifications.types import DBEngine, PushSubscriptionLoader, PushSubscriptionPruner
+from lib.notifications.types import (
+    DBEngine,
+    PushSubscriptionLoader,
+    PushSubscriptionPruner,
+)
 
 logger = get_logger("lib.notifications.registry")
 
 
 class NotificationRegistry:
     """
-    Singleton holding all notification runtime configuration.
-
-    Instantiated once at module import time as ``notification_registry``.
-    Configured via ``notification_registry.configure_notifications(...)``
-    or the module-level ``configure_notifications(...)`` shortcut.
-
-    Attributes (set by configure_notifications)
-    ----------
-    engine
-        SQLAlchemy Engine or AsyncEngine.  Required by DatabaseTransport.
-    redis_url
-        Redis connection URL string.  Used by SSETransport to get a client.
-    channel_layer
-        Chanx Channels channel layer instance.  Used by WebSocketTransport.
-    fcm_credentials
-        Path to Google service-account JSON file, or a
-        ``google.oauth2.service_account.Credentials`` object.
-    fcm_token_loader
-        ``Callable(recipient) → list[str] | str | None``.  Returns the
-        device token(s) for a recipient.  Required by FCMTransport.
-    recipient_models
-        ``dict[str, type]`` mapping class name → model class.  Required by
-        DeliverNotificationJob to reload the recipient from the database.
-        Example: ``{"User": User, "AdminUser": AdminUser}``
+    Registry for notification configuration and shared resources.
     """
 
     def __init__(self) -> None:
@@ -121,8 +102,12 @@ class NotificationRegistry:
         self._redis_connection_pool = redis_connection_pool
         self.vapid_private_key: str | None = vapid_private_key
         self.vapid_claims: VAPIDClaims | None = vapid_claims
-        self.push_subscription_loader: PushSubscriptionLoader | None = push_subscription_loader
-        self.push_subscription_pruner: PushSubscriptionPruner | None = push_subscription_pruner
+        self.push_subscription_loader: PushSubscriptionLoader | None = (
+            push_subscription_loader
+        )
+        self.push_subscription_pruner: PushSubscriptionPruner | None = (
+            push_subscription_pruner
+        )
         self.fcm_credentials = fcm_credentials
         self.fcm_token_loader = fcm_token_loader
         self.recipient_models = recipient_models or {}
@@ -146,31 +131,37 @@ class NotificationRegistry:
     @property
     def redis(self) -> redis.Redis | None:
         """
-        Return (and lazily create) the Redis client for SSE pub/sub.
+        Return the Redis client for SSE pub/sub.
 
-        The client is created on first access after ``configure_notifications``
-        is called with a ``redis_url`` or ``redis_connection_pool``.
+        When a shared connection pool is configured, a new client is created on
+        each access so it can be safely used inside the current event loop.
         """
 
-        if self._redis_client is None:
+        if self._redis_connection_pool is not None:
             try:
-                if self._redis_connection_pool is not None:
-                    self._redis_client = redis.Redis(
-                        connection_pool=self._redis_connection_pool,
-                        auto_close_connection_pool=False,
-                        decode_responses=False,
-                    )
-                    logger.debug("NotificationRegistry: Redis client created from connection pool")
-                elif self._redis:
-                    self._redis_client = self._redis
-                    logger.debug("NotificationRegistry: Redis client created from existing instance")
+                client = redis.Redis(
+                    connection_pool=self._redis_connection_pool,
+                    auto_close_connection_pool=False,
+                    decode_responses=False,
+                )
+                logger.debug(
+                    "NotificationRegistry: Redis client created from connection pool"
+                )
+                return client
             except Exception as exc:
                 logger.error(
                     "NotificationRegistry: failed to create Redis client: %s",
                     exc,
                     exc_info=True,
                 )
-                self._redis_client = None
+                return None
+
+        if self._redis is not None:
+            if self._redis_client is None:
+                self._redis_client = self._redis
+                logger.debug(
+                    "NotificationRegistry: Redis client created from existing instance"
+                )
 
         return self._redis_client
 
