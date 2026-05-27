@@ -1,6 +1,6 @@
 from .db import db_add_commit_refresh, db_commit, db_exec, db_get, db_refresh, db_session, is_async_engine
 from .exceptions import auth_error_to_http
-from .flows import create_user, create_users, find_or_create_oauth_user, user_by_email
+from .flows import create_user, create_users, find_or_create_oauth_user, user_by_email, run_deletion_callbacks
 from .ott import consume_token, generate_token, sweep_tokens
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "db_exec",
     "db_get",
     "db_refresh",
+    "run_deletion_callbacks",
     "is_async_engine",
     "find_or_create_oauth_user",
 ]

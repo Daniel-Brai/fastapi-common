@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import Any
+from inspect import isawaitable
+from typing import Any, Callable
 
 from fastapi import HTTPException, status
 from pydantic import EmailStr
@@ -7,6 +8,21 @@ from sqlmodel import select
 
 from lib.auth.helpers.db import db_commit, db_exec, db_get, db_refresh, db_session
 from lib.auth.models import OAuthAccount
+
+
+async def run_deletion_callbacks(
+    callbacks: list[Callable[[Any, Any], Any]] | None,
+    session: Any,
+    user: Any,
+) -> None:
+    if not callbacks:
+        return
+
+    for callback in callbacks:
+        result = callback(session, user)
+        if isawaitable(result):
+            await result
+
 
 
 async def user_by_email(email: str | EmailStr) -> Any | None:
@@ -51,7 +67,10 @@ async def create_user(user: dict[str, Any], raise_exceptions: bool = False) -> A
         plain_password = user.pop("password", None)
 
         if plain_password is None:
-            raise ValueError("Password is required to create a user. " "Include 'password' in the user dict.")
+            raise ValueError(
+                "Password is required to create a user. "
+                "Include 'password' in the user dict."
+            )
 
         user_attrs: dict[str, Any] = {
             "email": user["email"],
@@ -65,7 +84,9 @@ async def create_user(user: dict[str, Any], raise_exceptions: bool = False) -> A
         elif "roles" not in user_attrs and "roles" in model_fields:
             user_attrs["roles"] = []
 
-        user_attrs.update({k: v for k, v in user.items() if k not in ("email", "roles")})
+        user_attrs.update(
+            {k: v for k, v in user.items() if k not in ("email", "roles")}
+        )
 
         user = UserModel(**user_attrs)  # type: ignore[arg-type]
 
@@ -115,7 +136,10 @@ async def create_users(
     if duplicate_emails:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=("Duplicate email(s) found in batch input: " + ", ".join(sorted(duplicate_emails))),
+            detail=(
+                "Duplicate email(s) found in batch input: "
+                + ", ".join(sorted(duplicate_emails))
+            ),
         )
 
     async with db_session() as s:
@@ -124,7 +148,9 @@ async def create_users(
                 s,
                 select(UserModel).where(UserModel.email.in_(tuple(emails))),  # type: ignore[attr-defined]
             )
-            existing_by_email = {existing.email: existing for existing in existing_result.all()}
+            existing_by_email = {
+                existing.email: existing for existing in existing_result.all()
+            }
         else:
             existing_by_email = {}
 
@@ -146,7 +172,10 @@ async def create_users(
             user_data = dict(user)
             plain_password = user_data.pop("password", None)
             if plain_password is None:
-                raise ValueError("Password is required to create a user. " "Include 'password' in each user dict.")
+                raise ValueError(
+                    "Password is required to create a user. "
+                    "Include 'password' in each user dict."
+                )
 
             user_attrs: dict[str, Any] = {
                 "email": email,
@@ -159,7 +188,9 @@ async def create_users(
             elif "roles" not in user_attrs and "roles" in model_fields:
                 user_attrs["roles"] = []
 
-            user_attrs.update({k: v for k, v in user_data.items() if k not in ("email", "roles")})
+            user_attrs.update(
+                {k: v for k, v in user_data.items() if k not in ("email", "roles")}
+            )
 
             new_user = UserModel(**user_attrs)  # type: ignore[arg-type]
             new_user.hashed_password = get_hasher().hash(
@@ -175,6 +206,41 @@ async def create_users(
             await db_refresh(s, user_obj)
 
         return created_users
+
+
+async def delete_users(key: str, values: list[Any]) -> int:
+    """
+    Delete users where the given column matches any value in *values*.
+
+    Args:
+        key: Column name on the user model.
+        values: List of values to match for deletion.
+
+    Returns:
+        The number of rows deleted.
+    """
+
+    if not isinstance(key, str):
+        raise TypeError("key must be a string")
+    if not isinstance(values, list):
+        raise TypeError("values must be a list")
+    if not values:
+        return 0
+
+    from sqlalchemy import delete
+    from lib.auth.config import get_user_model
+
+    UserModel = get_user_model()
+    if not hasattr(UserModel, key):
+        raise ValueError(f"UserModel has no column '{key}'")
+
+    column = getattr(UserModel, key)
+    async with db_session() as s:
+        stmt = delete(UserModel).where(column.in_(tuple(values)))
+        result = await db_exec(s, stmt)
+        await db_commit(s)
+
+        return getattr(result, "rowcount", 0) or 0
 
 
 async def find_or_create_oauth_user(
@@ -203,7 +269,9 @@ async def find_or_create_oauth_user(
     async with db_session() as s:
         _r = await db_exec(
             s,
-            select(OAuthAccount).where(OAuthAccount.provider == provider).where(OAuthAccount.provider_sub == sub),
+            select(OAuthAccount)
+            .where(OAuthAccount.provider == provider)
+            .where(OAuthAccount.provider_sub == sub),
         )
 
         oauth_acc = _r.first()
@@ -220,7 +288,9 @@ async def find_or_create_oauth_user(
             await db_refresh(s, user)
             return user
 
-        _r = await db_exec(s, select(get_user_model()).where(get_user_model().email == email))
+        _r = await db_exec(
+            s, select(get_user_model()).where(get_user_model().email == email)
+        )
 
         user = _r.first()
 

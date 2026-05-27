@@ -6,9 +6,20 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, stat
 from sqlmodel import select
 
 from lib.auth.backends import JWTBackend, SessionBackend
-from lib.auth.config import get_authorization_defaults, get_backend, get_hasher, get_user_model
+from lib.auth.config import (
+    get_authorization_defaults,
+    get_backend,
+    get_hasher,
+    get_user_model,
+)
 from lib.auth.enums import SessionStatus, TokenStatus
-from lib.auth.exceptions import AccountScheduledForDeletion, AuthError, TokenExpired, TokenInvalid, TokenRevoked
+from lib.auth.exceptions import (
+    AccountScheduledForDeletion,
+    AuthError,
+    TokenExpired,
+    TokenInvalid,
+    TokenRevoked,
+)
 from lib.auth.helpers import (
     auth_error_to_http,
     consume_token,
@@ -18,6 +29,7 @@ from lib.auth.helpers import (
     db_session,
     generate_token,
     user_by_email,
+    run_deletion_callbacks,
 )
 from lib.auth.jobs import SendAuthEmailJob
 from lib.auth.models import RefreshToken, Session
@@ -34,10 +46,18 @@ from lib.auth.schemas import (
 )
 from lib.auth.throttler import get_throttler_for_router
 from lib.auth.user import AuthUserMixin
-from lib.ext.fastapi import IBaseResponse, IResponse, ORJSONResponse, build_orjson_response, get_client_ip
+from lib.ext.fastapi import (
+    IBaseResponse,
+    IResponse,
+    ORJSONResponse,
+    build_orjson_response,
+    get_client_ip,
+)
 from lib.logger import get_logger
 
 logger = get_logger("lib.auth.flows.accounts")
+
+
 
 
 def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
@@ -76,7 +96,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
 
             async with db_session() as s:
                 UserModel = get_user_model()
-                _r = await db_exec(s, select(UserModel).where(UserModel.email == body.email))
+                _r = await db_exec(
+                    s, select(UserModel).where(UserModel.email == body.email)
+                )
 
                 existing = _r.first()
                 if existing:
@@ -98,7 +120,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                     user_attrs["roles"] = []
 
                 user = UserModel(**user_attrs)  # type: ignore[arg-type]
-                user.hashed_password = get_hasher().hash(body.password, user.password_salt)
+                user.hashed_password = get_hasher().hash(
+                    body.password, user.password_salt
+                )
                 s.add(user)
                 await db_commit(s)
                 await db_refresh(s, user)
@@ -114,7 +138,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                         user_id=user.id,
                         requested_from=get_client_ip(request),
                     )
-                    SendAuthEmailJob.perform_later("send_verification_email", to=user.email, token=token)
+                    SendAuthEmailJob.perform_later(
+                        "send_verification_email", to=user.email, token=token
+                    )
                     result = None
             except AuthError as exc:
                 logger.exception("Failed to register user user_id=%s: %s", user.id, exc)
@@ -130,7 +156,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                     data=response_data,
                 )
 
-            def attach_tokens(result: Any, response_data: dict[str, Any]) -> dict[str, Any]:
+            def attach_tokens(
+                result: Any, response_data: dict[str, Any]
+            ) -> dict[str, Any]:
                 if hasattr(result, "access_token") and hasattr(result, "refresh_token"):
                     auth_data = asdict(result)
                     response_data["token"] = auth_data
@@ -173,14 +201,22 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
 
         UserModel = get_user_model()
         async with db_session() as s:
-            _r = await db_exec(s, select(UserModel).where(UserModel.email == body.email))
+            _r = await db_exec(
+                s, select(UserModel).where(UserModel.email == body.email)
+            )
             user = _r.first()
 
         if not user or not user.hashed_password:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
 
-        if user and not get_hasher().verify(body.password, user.password_salt, user.hashed_password):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if user and not get_hasher().verify(
+            body.password, user.password_salt, user.hashed_password
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
 
         if user and not user.email_verified:
             try:
@@ -189,7 +225,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                     user_id=user.id,
                     requested_from=get_client_ip(request),
                 )
-                SendAuthEmailJob.perform_later("send_verification_email", to=user.email, token=token)
+                SendAuthEmailJob.perform_later(
+                    "send_verification_email", to=user.email, token=token
+                )
             except Exception:
                 logger.exception(
                     "Failed to send email verification during login for user_id=%s",
@@ -202,7 +240,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             )
 
         if user and not user.is_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive."
+            )
 
         if options.deletion_style == "soft" and getattr(user, "deleted_at", None):
             from datetime import datetime, timezone
@@ -211,7 +251,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             if deletion_time.tzinfo is None:
                 deletion_time = deletion_time.replace(tzinfo=timezone.utc)
 
-            final_deletion = deletion_time + timedelta(days=options.deletion_grace_period_days)
+            final_deletion = deletion_time + timedelta(
+                days=options.deletion_grace_period_days
+            )
             days_left = (final_deletion - datetime.now(timezone.utc)).days
             days_left = max(0, days_left)
 
@@ -226,7 +268,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             logger.exception("Failed to login user user_id=%s: %s", user.id, exc)
             raise auth_error_to_http(exc) from exc
         except Exception as exc:
-            logger.exception("Unexpected error during login for user_id=%s: %s", user.id, exc)
+            logger.exception(
+                "Unexpected error during login for user_id=%s: %s", user.id, exc
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An unexpected error occurred during login. Please try again later.",
@@ -360,7 +404,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                 detail="This account uses social loggerin and has no password to change.",
             )
 
-        if not get_hasher().verify(body.current_password, user.password_salt, user.hashed_password):
+        if not get_hasher().verify(
+            body.current_password, user.password_salt, user.hashed_password
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Current password is incorrect",
@@ -404,7 +450,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             s.commit()
 
         try:
-            SendAuthEmailJob.perform_later("send_password_changed_notice", to=user.email)
+            SendAuthEmailJob.perform_later(
+                "send_password_changed_notice", to=user.email
+            )
         except Exception:
             logger.warning("Could not send password-changed notice to %s", user.email)
 
@@ -445,7 +493,9 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                     detail="Current password is required to change your email address.",
                 )
 
-            if not get_hasher().verify(body.current_password, user.password_salt, user.hashed_password):
+            if not get_hasher().verify(
+                body.current_password, user.password_salt, user.hashed_password
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Current password is incorrect",
@@ -473,13 +523,17 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
                 new_email=str(body.new_email),
             )
         except Exception:
-            logger.exception("Failed to send email change verification for user_id=%s", user.id)
+            logger.exception(
+                "Failed to send email change verification for user_id=%s", user.id
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Failed to send verification email",
             )
 
-        return build_orjson_response(message="Verification email sent to your new address.", base=True)
+        return build_orjson_response(
+            message="Verification email sent to your new address.", base=True
+        )
 
     @accounts_router.get(
         "/verify-email-change/{token}",
@@ -509,12 +563,16 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
 
         new_email = rec.payload
         if not new_email:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token is malformed")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Token is malformed"
+            )
 
         async with db_session() as s:
             user = s.get(get_user_model(), rec.user_id)
             if not user:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                )
 
             old_email = user.email
 
@@ -539,9 +597,13 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
         try:
             SendAuthEmailJob.perform_later("send_email_changed_notice", to=old_email)
         except Exception:
-            logger.warning("Could not send email-changed notice to old address %s", old_email)
+            logger.warning(
+                "Could not send email-changed notice to old address %s", old_email
+            )
 
-        return build_orjson_response(message="Email address updated successfully.", base=True)
+        return build_orjson_response(
+            message="Email address updated successfully.", base=True
+        )
 
     if options.deletion_style == "soft":
 
@@ -565,32 +627,41 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             Provide a hard-delete variant if your compliance requirements demand it.
             """
 
-            async with db_session() as s:
-                u = s.get(get_user_model(), user.id)
-                u.is_active = False
-                u.updated_at = datetime.now()
-                s.add(u)
+            try:
+                async with db_session() as s:
+                    u = s.get(get_user_model(), user.id)
+                    u.is_active = False
+                    u.updated_at = datetime.now()
+                    s.add(u)
 
-                backend = get_backend()
-                if isinstance(backend, JWTBackend):
-                    for t in s.exec(
-                        select(RefreshToken)
-                        .where(RefreshToken.user_id == user.id)
-                        .where(RefreshToken.status == TokenStatus.ACTIVE)
-                    ).all():
-                        t.status = TokenStatus.REVOKED
-                        t.revoked_at = datetime.now()
-                        s.add(t)
-                elif isinstance(backend, SessionBackend):
-                    for sess in s.exec(
-                        select(Session).where(Session.user_id == user.id).where(Session.status == SessionStatus.ACTIVE)
-                    ).all():
+                    backend = get_backend()
+                    if isinstance(backend, JWTBackend):
+                        for t in s.exec(
+                            select(RefreshToken)
+                            .where(RefreshToken.user_id == user.id)
+                            .where(RefreshToken.status == TokenStatus.ACTIVE)
+                        ).all():
+                            t.status = TokenStatus.REVOKED
+                            t.revoked_at = datetime.now()
+                            s.add(t)
+                    elif isinstance(backend, SessionBackend):
+                        for sess in s.exec(
+                            select(Session)
+                            .where(Session.user_id == user.id)
+                            .where(Session.status == SessionStatus.ACTIVE)
+                        ).all():
+                            sess.status = SessionStatus.REVOKED
+                            sess.revoked_at = datetime.now()
+                            s.add(sess)
 
-                        sess.status = SessionStatus.REVOKED
-                        sess.revoked_at = datetime.now()
-                        s.add(sess)
-
-                s.commit()
+                    await run_deletion_callbacks(options.deletion_callbacks, s, u)
+                    s.commit()
+            except Exception as exc:
+                logger.exception("Failed to soft delete user %s", user.id, exc_info=exc)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to deactivate account. Please try again later.",
+                ) from exc
 
             response = build_orjson_response(
                 message=f"Account deactivated successfully. You can reactivate your account within {options.deletion_grace_period_days} days before it is permanently deleted.",
@@ -616,7 +687,11 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             """
             async with db_session() as s:
                 UserModel = get_user_model()
-                user = (await db_exec(s, select(UserModel).where(UserModel.email == body.email))).first()
+                user = (
+                    await db_exec(
+                        s, select(UserModel).where(UserModel.email == body.email)
+                    )
+                ).first()
 
             if not user or getattr(user, "deleted_at", None) is None:
                 return build_orjson_response(
@@ -626,9 +701,13 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
 
             token = await generate_token(kind="account_recovery", user_id=user.id)
             try:
-                SendAuthEmailJob.perform_later("send_account_recovery_email", to=user.email, token=token)
+                SendAuthEmailJob.perform_later(
+                    "send_account_recovery_email", to=user.email, token=token
+                )
             except Exception:
-                logger.exception("Failed to dispatch account recovery email for %s", user.id)
+                logger.exception(
+                    "Failed to dispatch account recovery email for %s", user.id
+                )
 
             return build_orjson_response(
                 message="If your account is eligible for recovery, an email has been sent.",
@@ -650,23 +729,31 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             try:
                 ott = await consume_token(kind="account_recovery", token=token)
             except Exception as e:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+                )
 
             async with db_session() as s:
                 user = (
                     await db_exec(
                         s,
-                        select(get_user_model()).where(get_user_model().id == ott.user_id),
+                        select(get_user_model()).where(
+                            get_user_model().id == ott.user_id
+                        ),
                     )
                 ).first()
                 if not user:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                    )
 
                 user.deleted_at = None
                 s.add(user)
                 await db_commit(s)
 
-            return build_orjson_response(message="Account successfully recovered.", base=True)
+            return build_orjson_response(
+                message="Account successfully recovered.", base=True
+            )
 
     elif options.deletion_style == "hard":
 
@@ -688,23 +775,40 @@ def get_accounts_router(auth_dep: Callable, options: AuthOptions) -> APIRouter:
             **NOTE**: It relies on cascading deletes to clean up related data setup in the database level, so make sure your database schema is set up accordingly.
             """
 
-            async with db_session() as s:
-                u = s.get(get_user_model(), user.id)
-                if not u:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            try:
+                async with db_session() as s:
+                    u = s.get(get_user_model(), user.id)
+                    if not u:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="User not found",
+                        )
 
-                backend = get_backend()
+                    backend = get_backend()
 
-                if isinstance(backend, JWTBackend):
-                    for t in s.exec(select(RefreshToken).where(RefreshToken.user_id == user.id)).all():
-                        s.delete(t)
+                    if isinstance(backend, JWTBackend):
+                        for t in s.exec(
+                            select(RefreshToken).where(RefreshToken.user_id == user.id)
+                        ).all():
+                            s.delete(t)
 
-                elif isinstance(backend, SessionBackend):
-                    for sess in s.exec(select(Session).where(Session.user_id == user.id)).all():
-                        s.delete(sess)
+                    elif isinstance(backend, SessionBackend):
+                        for sess in s.exec(
+                            select(Session).where(Session.user_id == user.id)
+                        ).all():
+                            s.delete(sess)
 
-                s.delete(u)
-                s.commit()
+                    await run_deletion_callbacks(options.deletion_callbacks, s, u)
+                    s.delete(u)
+                    s.commit()
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.exception("Failed to hard delete user %s", user.id, exc_info=exc)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to permanently delete account. Please try again later.",
+                ) from exc
 
             response = build_orjson_response(
                 message="Account permanently deleted successfully.",

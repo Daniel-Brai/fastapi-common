@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Callable, Literal
 
 from pydantic import PositiveInt
 from pydantic.dataclasses import dataclass
@@ -23,6 +23,10 @@ class AuthOptions:
                 Whether request throttling is enabled for authentication endpoints. If True, limits the number of requests to prevent abuse.
                 Note :meth:`lib.throttler.configure_throttler` must be configured separately for this to work.
                 Default is False.
+        deletion_callbacks (list[Callable[[Any, Any], Any]] | None, None):
+                Optional list of callback functions to be called when a user is deleted.
+                Each callback should be a function that takes two arguments: session (the database session) and user (the user object that was deleted). 
+                This allows for custom cleanup logic to be executed when a user is deleted, such as removing related data or sending notifications.
     """
 
     registration_enabled: bool = True
@@ -30,4 +34,5 @@ class AuthOptions:
     verification_token_style: Literal["link", "otp"] = "link"
     deletion_style: Literal["soft", "hard"] = "soft"
     deletion_grace_period_days: PositiveInt = 30
+    deletion_callbacks: list[Callable[[Any, Any], Any]] | None = None
     throttler_enabled: bool = True
