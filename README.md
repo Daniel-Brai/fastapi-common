@@ -29,3 +29,4 @@ Copy a folder to a specific destination directory:
 
 - The script downloads the repository archive from GitHub and extracts only the requested folder.
 - The folder path is relative to the repository root.
+- When downloaded, internal libraries follow the strict convention of being placed in a `lib` folder.
