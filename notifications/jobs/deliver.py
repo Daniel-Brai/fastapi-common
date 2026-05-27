@@ -60,7 +60,9 @@ class DeliverNotificationJob(BaseJob):
                     )
                     return
 
-                recipient_cls = notification_registry.recipient_models.get(recipient_type)
+                recipient_cls = notification_registry.recipient_models.get(
+                    recipient_type
+                )
                 if recipient_cls is None:
                     self.logger.error(
                         "DeliverNotificationJob: recipient model %r not registered. "
@@ -74,18 +76,26 @@ class DeliverNotificationJob(BaseJob):
                 except ValueError:
                     pk = recipient_id
 
-                sync_engine = engine.sync_engine if isinstance(engine, AsyncEngine) else engine
+                if isinstance(engine, AsyncEngine):
+                    from sqlmodel.ext.asyncio.session import AsyncSession
 
-                with Session(sync_engine) as session:
-                    recipient = session.get(recipient_cls, pk)
+                    async with AsyncSession(engine) as session:
+                        recipient = await session.get(recipient_cls, pk)
+                else:
+                    with Session(engine) as session:
+                        recipient = session.get(recipient_cls, pk)
 
                 if recipient is None:
-                    self.logger.warning(f"DeliverNotificationJob: {recipient_type}#{recipient_id} not found — skipping")
+                    self.logger.warning(
+                        f"DeliverNotificationJob: {recipient_type}#{recipient_id} not found — skipping"
+                    )
                     return
 
                 await notification.deliver(recipient)
 
-                self.logger.info(f"DeliverNotificationJob: delivered {class_name} to {recipient_type}#{recipient_id}")
+                self.logger.info(
+                    f"DeliverNotificationJob: delivered {class_name} to {recipient_type}#{recipient_id}"
+                )
             except Exception as e:
                 self.logger.exception(
                     f"DeliverNotificationJob: failed to deliver {notification_class} to {recipient_type}#{recipient_id} with exception: {e}"
