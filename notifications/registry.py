@@ -15,7 +15,7 @@ logger = get_logger("lib.notifications.registry")
 
 class NotificationRegistry:
     """
-    Registry for notification configuration and shared resources.
+    Registry for notification-related configuration and dependencies.
     """
 
     def __init__(self) -> None:
@@ -23,6 +23,7 @@ class NotificationRegistry:
         self.engine: DBEngine | None = None
         self._redis: redis.Redis | None = None
         self._redis_connection_pool: redis.ConnectionPool | None = None
+        self._redis_connection_pool_kwargs: dict[str, Any] | None = None
         self.vapid_private_key: str | None = None
         self.vapid_claims: VAPIDClaims | None = None
         self.push_subscription_loader: PushSubscriptionLoader | None = None
@@ -100,6 +101,16 @@ class NotificationRegistry:
         self.engine = engine
         self._redis = redis
         self._redis_connection_pool = redis_connection_pool
+        self._redis_connection_pool_kwargs = None
+
+        if self._redis_connection_pool is not None:
+            self._redis_connection_pool_kwargs = {
+                **self._redis_connection_pool.connection_kwargs,
+                "connection_class": self._redis_connection_pool.connection_class,
+                "encoder_class": self._redis_connection_pool.encoder_class,
+                "max_connections": self._redis_connection_pool.max_connections,
+            }
+
         self.vapid_private_key: str | None = vapid_private_key
         self.vapid_claims: VAPIDClaims | None = vapid_claims
         self.push_subscription_loader: PushSubscriptionLoader | None = (
@@ -139,9 +150,15 @@ class NotificationRegistry:
 
         if self._redis_connection_pool is not None:
             try:
+                if self._redis_connection_pool_kwargs is not None:
+                    pool = redis.ConnectionPool(
+                        **self._redis_connection_pool_kwargs,
+                    )
+                else:
+                    pool = self._redis_connection_pool
+
                 client = redis.Redis(
-                    connection_pool=self._redis_connection_pool,
-                    auto_close_connection_pool=False,
+                    connection_pool=pool,
                     decode_responses=False,
                 )
                 logger.debug(
