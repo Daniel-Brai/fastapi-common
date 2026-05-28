@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 
@@ -56,7 +56,7 @@ class TransitionRecord:
     to_state: str
     metadata: dict[str, Any] = field(default_factory=dict)
     sort_key: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     id: Any = field(default=None, compare=False)
 
     def __repr__(self) -> str:  # pragma: no cover

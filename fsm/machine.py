@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Callable, TypeVar
 
 from .namespace import MachineNamespace
@@ -396,7 +396,7 @@ class StateMachine(metaclass=StateMachineMeta):
             to_state=state,
             metadata=metadata,
             sort_key=len(all_history),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
         )
 
         try:
