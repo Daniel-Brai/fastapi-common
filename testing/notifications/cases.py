@@ -23,6 +23,16 @@ class TestNotificationCase(unittest.IsolatedAsyncioTestCase):
         if self.notification_class is None:
             raise NotImplementedError(f"{self.__class__.__name__} must set `notification_class`.")
 
+    @property 
+    def notification(self):
+        """
+        Helper to create an instance of the notification class.
+        """
+
+        assert self.notification_class is not None
+
+        return self.notification_class
+
     def make_recipient(self, **attrs: Any) -> MagicMock:
         """
         Build a mock recipient with the given attributes.
