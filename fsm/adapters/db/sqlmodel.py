@@ -1,60 +1,4 @@
-"""
-SQLModel convenience layer for Stately.
-
-This module re-exports :class:`SQLAlchemyAdapter` and provides ready-to-use
-field declarations for SQLModel transition models so you do not have to repeat
-the boilerplate column definitions.
-
-Typical usage
--------------
-
-1.  Define your transition model::
-
-        from sqlmodel import Field, Relationship
-        from stately.adapters.sqlmodel import SQLModelTransition, SQLModelTransitionBase
-
-        class OrderTransition(SQLModelTransitionBase, table=True):
-            __tablename__ = "order_transitions"
-            id:       int | None = Field(default=None, primary_key=True)
-            order_id: int        = Field(foreign_key="order.id", index=True)
-            order:    "Order"    = Relationship(back_populates="transitions")
-
-2.  Wire the adapter into your model::
-
-        from stately.adapters.sqlmodel import SQLModelAdapter
-
-        class Order(SQLModel, table=True):
-            __tablename__ = "order"
-            id:          int | None          = Field(default=None, primary_key=True)
-            transitions: list[OrderTransition] = Relationship(back_populates="order")
-
-            def state_machine(self, session: AsyncSession) -> OrderStateMachine:
-                return OrderStateMachine(
-                    self,
-                    adapter=SQLModelAdapter(
-                        session=session,
-                        model=self,
-                        transition_class=OrderTransition,
-                        foreign_key_attr="order_id",
-                    )
-                )
-
-3.  Use it::
-
-        async with AsyncSession(engine) as session:
-            order = await session.get(Order, 1)
-            machine = order.state_machine(session)
-
-            print(await machine.current_state())          # "pending"
-            print(await machine.allowed_transitions())    # ["checking_out", "cancelled"]
-
-            record = await machine.transition_to("checking_out")
-            await session.commit()
-
-            await machine.run_after_commit_callbacks(record)
-"""
-
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 from typing import Any, Optional
 
@@ -63,18 +7,15 @@ from ..base import AbstractAdapter
 from ...types import TransitionRecord
 from ...exceptions import TransitionConflictError
 
-
 try:
     from sqlmodel import Field, SQLModel, select, col
     from sqlalchemy.exc import IntegrityError
-    from sqlmodel.ext.asyncio.session import AsyncSession 
+    from sqlmodel.ext.asyncio.session import AsyncSession
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "fsm.adapters.sqlmodel requires sqlmodel. "
         "Install it with: pip install sqlmodel"
     ) from exc
-
-
 
 
 class SQLModelTransitionBase(SQLModel):
@@ -96,18 +37,17 @@ class SQLModelTransitionBase(SQLModel):
             order_id: int        = Field(foreign_key="order.id", index=True)
     """
 
-    from_state:  Optional[str] = Field(default=None,  max_length=64)
-    to_state:    str           = Field(max_length=64)
-    sort_key:    int           = Field(default=0,      index=True)
-    metadata_:   dict[str, Any] = Field(default_factory=dict)  
-    created_at:  datetime      = Field(default_factory=datetime.now)
-    most_recent: bool          = Field(default=False,  index=True)
-
+    from_state: Optional[str] = Field(default=None, max_length=500)
+    to_state: str = Field(max_length=500)
+    sort_key: int = Field(default=0, index=True)
+    metadata_: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    most_recent: bool = Field(default=False, index=True)
 
 
 class SQLModelAdapter(AbstractAdapter):
     """
-    Async SQLAlchemy adapter.
+    Async SQLModel adapter.
 
     Parameters
     ----------
@@ -149,7 +89,11 @@ class SQLModelAdapter(AbstractAdapter):
 
     def _orm_to_record(self, row: Any) -> TransitionRecord:
         try:
-            meta = json.loads(row.metadata_) if row.metadata_ and isinstance(row.metadata_, str) else (row.metadata_ if isinstance(row.metadata_, dict) else {})
+            meta = (
+                json.loads(row.metadata_)
+                if row.metadata_ and isinstance(row.metadata_, str)
+                else (row.metadata_ if isinstance(row.metadata_, dict) else {})
+            )
         except (json.JSONDecodeError, TypeError):
             meta = {}
 
@@ -199,7 +143,7 @@ class SQLModelAdapter(AbstractAdapter):
                 "from_state": record.from_state,
                 "to_state": record.to_state,
                 "sort_key": record.sort_key,
-                "metadata_": json.dumps(record.metadata),
+                "metadata_": record.metadata,
                 "created_at": record.created_at,
                 "most_recent": True,
             }

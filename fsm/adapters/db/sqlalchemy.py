@@ -7,7 +7,6 @@ from ...exceptions import TransitionConflictError
 
 from ..base import AbstractAdapter
 
-
 try:
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
@@ -17,7 +16,6 @@ except ImportError as exc:  # pragma: no cover
         "fsm.adapters.sqlalchemy requires SQLAlchemy 2.x. "
         "Install it with: pip install sqlalchemy"
     ) from exc
-
 
 
 class SQLAlchemyTransitionMixin:
@@ -32,7 +30,7 @@ class SQLAlchemyTransitionMixin:
         created_at (datetime): The timestamp when the transition was created.
         most_recent (bool): A flag indicating if this transition is the most recent one for its owner.
 
-    
+
     Usage
     -----
 
@@ -55,9 +53,9 @@ class SQLAlchemyTransitionMixin:
     from_state: str | None
     to_state: str
     sort_key: int
-    metadata_: str  
+    metadata_: str
     created_at: datetime
-    most_recent: bool 
+    most_recent: bool
 
     @classmethod
     def _columns(cls):
@@ -110,10 +108,10 @@ def make_transition_table(base, table_name: str, foreign_key: str):
 
         id = Column(Integer, primary_key=True, autoincrement=True)
         owner_id = Column(Integer, ForeignKey(foreign_key), nullable=False, index=True)
-        from_state = Column(String(64), nullable=True)  # type: ignore[assignment]
-        to_state = Column(String(64), nullable=False)  # type: ignore[assignment]
+        from_state = Column(String(500), nullable=True)  # type: ignore[assignment]
+        to_state = Column(String(500), nullable=False)  # type: ignore[assignment]
         sort_key = Column(Integer, nullable=False, default=0)  # type: ignore[assignment]
-        metadata_ = Column(String, nullable=False, default="{}")  # type: ignore[assignment]
+        metadata_ = Column(String(500), nullable=False, default="{}")  # type: ignore[assignment]
         created_at = Column(DateTime, nullable=False, default=datetime.now)  # type: ignore[assignment]
         most_recent = Column(Boolean, nullable=False, default=False)  # type: ignore[assignment]
 
@@ -201,7 +199,6 @@ class SQLAlchemyAdapter(AbstractAdapter):
         return h[-1] if h else None
 
     async def create_transition(self, record: TransitionRecord) -> TransitionRecord:
-        # Reset most_recent on previous transitions
         prev_stmt = select(self._cls).where(
             self._fk_filter(), self._cls.most_recent.is_(True)
         )
@@ -223,15 +220,16 @@ class SQLAlchemyAdapter(AbstractAdapter):
         )
 
         self._session.add(orm_obj)
+
         try:
             await self._session.flush()
         except IntegrityError as exc:
             await self._session.rollback()
+
             raise TransitionConflictError(
                 f"DB conflict persisting transition to '{record.to_state}'"
             ) from exc
 
         saved = self._orm_to_record(orm_obj)
-        # Invalidate cache so next call re-reads from DB
         self._cache = None
         return saved

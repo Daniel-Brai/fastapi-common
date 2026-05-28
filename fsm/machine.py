@@ -21,6 +21,7 @@ from .exceptions import (
     InvalidStateError,
     TransitionFailedError,
 )
+from .adapters import AbstractAdapter
 from .helpers import maybe_await
 
 T = TypeVar("T")
@@ -210,13 +211,13 @@ class StateMachine(metaclass=StateMachineMeta):
         self,
         model: Any,
         *,
-        adapter: Any | None = None,
+        adapter: AbstractAdapter | None = None,
     ) -> None:
 
         from .adapters.memory import MemoryAdapter
 
         self._model = model
-        self._adapter = adapter if adapter is not None else MemoryAdapter()
+        self._adapter: AbstractAdapter = adapter if adapter is not None else MemoryAdapter()
 
     @classmethod
     def initial_state(cls) -> str | None:
@@ -349,13 +350,17 @@ class StateMachine(metaclass=StateMachineMeta):
 
     async def can_transition_to(self, state: str) -> bool:
         """
-        Return ``True`` if *state* is reachable from the current state
-        **and** all applicable guards pass.
+        Check if a transition to *state* is allowed from the current state.
+
+        Returns:
+            bool: ``True`` if *state* is reachable from the current state **and** all applicable guards pass.
         """
 
         if state not in await self.allowed_transitions():
             return False
+        
         from_state = await self.current_state()
+
         try:
             await self._run_guards(from_state, state)
             return True
@@ -457,7 +462,8 @@ class StateMachine(metaclass=StateMachineMeta):
         max_retries: int = 1,
     ) -> Any:
         """
-        Retry *func* up to *max_retries* times if :exc:`TransitionConflictError` is raised (e.g. due to a concurrent write in the database)::
+        Retry *func* up to *max_retries* times if :exc:`TransitionConflictError` is raised (
+            e.g. due to a concurrent write in the database)::
 
             await OrderStateMachine.retry_conflicts(
                 lambda: machine.transition_to("shipped"),

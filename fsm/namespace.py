@@ -27,8 +27,10 @@ class MachineNamespace(dict):
         for base in reversed(bases):
             if hasattr(base, "_states"):
                 self._states.update(
-                    {n: {"name": n, "initial": sd.initial}
-                     for n, sd in base._states.items()}
+                    {
+                        n: {"name": n, "initial": sd.initial}
+                        for n, sd in base._states.items()
+                    }
                 )
             if hasattr(base, "_transitions"):
                 self._transitions.extend(
@@ -36,11 +38,10 @@ class MachineNamespace(dict):
                     for td in base._transitions
                 )
 
-        self["state"]              = self._add_state
-        self["transition"]         = self._add_transition
-        self["remove_state"]       = self._remove_state
+        self["state"] = self._add_state
+        self["transition"] = self._add_transition
+        self["remove_state"] = self._remove_state
         self["remove_transitions"] = self._remove_transitions
-
 
     def _add_state(self, name: str, *, initial: bool = False) -> None:
         """
@@ -50,7 +51,7 @@ class MachineNamespace(dict):
         """
 
         self._states[name] = {"name": name, "initial": initial}
-        self[name.upper()] = name        
+        self[name.upper()] = name
 
     def _add_transition(
         self,
@@ -75,7 +76,7 @@ class MachineNamespace(dict):
         """
 
         self._states.pop(name, None)
-        self.pop(name.upper(), None) 
+        self.pop(name.upper(), None)
 
         cleaned: list[dict[str, Any]] = []
 
