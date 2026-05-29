@@ -1,10 +1,31 @@
 import asyncio
+from datetime import datetime, timedelta
 from typing import Any, ClassVar
 
 from lib.logger import get_logger
 from lib.notifications.transports import AbstractTransport
 
 logger = get_logger("lib.notifications.base")
+
+
+class NotificationDeliveryProxy:
+    def __init__(
+        self,
+        notification: "BaseNotification",
+        *,
+        wait: timedelta | None = None,
+        wait_until: datetime | None = None,
+    ):
+        self.notification = notification
+        self.wait = wait
+        self.wait_until = wait_until
+
+    def deliver_later(self, recipients: Any) -> None:
+        self.notification.deliver_later(
+            recipients,
+            wait=self.wait,
+            wait_until=self.wait_until,
+        )
 
 
 class BaseNotification:
@@ -85,7 +106,24 @@ class BaseNotification:
         else:
             await self._deliver_one(recipients)
 
-    def deliver_later(self, recipients: Any) -> None:
+    def set(
+        self,
+        *,
+        wait: timedelta | None = None,
+        wait_until: datetime | None = None,
+    ) -> "NotificationDeliveryProxy":
+        """
+        Return a proxy that carries timing options through to deliver_later().
+        """
+        return NotificationDeliveryProxy(self, wait=wait, wait_until=wait_until)
+
+    def deliver_later(
+        self,
+        recipients: Any,
+        *,
+        wait: timedelta | None = None,
+        wait_until: datetime | None = None,
+    ) -> None:
         """
         Enqueue background delivery to one or more recipients via the jobs library.
 
@@ -97,19 +135,30 @@ class BaseNotification:
         ----------
         recipients
             A single recipient object or a list/iterable of recipients.
+        wait
+            Optional delay before enqueuing delivery.
+        wait_until
+            Optional datetime at which to enqueue delivery.
         """
 
-        targets = []
-        if not isinstance(recipients, list):
-            targets.append(recipients)
+        if isinstance(recipients, list):
+            targets = recipients
+        else:
+            targets = [recipients]
 
         from lib.notifications.jobs import DeliverNotificationJob
 
         notification_class = f"{type(self).__module__}.{type(self).__qualname__}"
         params = self.serialisable_params()
 
+        job_target = (
+            DeliverNotificationJob.set(wait=wait, wait_until=wait_until)
+            if wait is not None or wait_until is not None
+            else DeliverNotificationJob
+        )
+
         for recipient in targets:
-            DeliverNotificationJob.perform_later(
+            job_target.perform_later(
                 notification_class=notification_class,
                 recipient_type=type(recipient).__name__,
                 recipient_id=str(getattr(recipient, "id", recipient)),
