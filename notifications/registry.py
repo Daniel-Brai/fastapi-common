@@ -1,7 +1,6 @@
 from typing import Any, Callable
 
 import redis.asyncio as redis
-
 from lib.logger import get_logger
 from lib.notifications.schemas import VAPIDClaims
 from lib.notifications.types import (
@@ -19,11 +18,12 @@ class NotificationRegistry:
     """
 
     def __init__(self) -> None:
-        self._configured: bool = False
+        self._configured = False
         self.engine: DBEngine | None = None
         self._redis: redis.Redis | None = None
         self._redis_connection_pool: redis.ConnectionPool | None = None
         self._redis_connection_pool_kwargs: dict[str, Any] | None = None
+        self._redis_client: redis.Redis | None = None
         self.vapid_private_key: str | None = None
         self.vapid_claims: VAPIDClaims | None = None
         self.push_subscription_loader: PushSubscriptionLoader | None = None
@@ -31,7 +31,7 @@ class NotificationRegistry:
         self.fcm_credentials: Any = None
         self.fcm_token_loader: Callable | None = None
         self.recipient_models: dict[str, type] = {}
-        self.route_prefix: str = "/notifications"
+        self.route_prefix = "/notifications"
 
     def configure_notifications(
         self,
@@ -84,50 +84,62 @@ class NotificationRegistry:
         Returns
         -------
         self for chaining or storage.
-
-        Example
-        -------
-        ::
-
-            configure_notifications(
-                engine           = engine,
-                redis            = redis_client,
-                fcm_credentials  = "/path/to/service-account.json",
-                fcm_token_loader = lambda user: user.fcm_tokens,
-                recipient_models = {"User": User},
-            )
         """
 
         self.engine = engine
         self._redis = redis
-        self._redis_connection_pool = redis_connection_pool
-        self._redis_connection_pool_kwargs = None
+        self._redis_client = None
+        self._set_redis_connection_pool(redis_connection_pool)
 
-        if self._redis_connection_pool is not None:
-            self._redis_connection_pool_kwargs = {
-                **self._redis_connection_pool.connection_kwargs,
-                "connection_class": self._redis_connection_pool.connection_class,
-                "encoder_class": self._redis_connection_pool.encoder_class,
-                "max_connections": self._redis_connection_pool.max_connections,
-            }
-
-        self.vapid_private_key: str | None = vapid_private_key
-        self.vapid_claims: VAPIDClaims | None = vapid_claims
-        self.push_subscription_loader: PushSubscriptionLoader | None = (
-            push_subscription_loader
-        )
-        self.push_subscription_pruner: PushSubscriptionPruner | None = (
-            push_subscription_pruner
-        )
+        self.vapid_private_key = vapid_private_key
+        self.vapid_claims = vapid_claims
+        self.push_subscription_loader = push_subscription_loader
+        self.push_subscription_pruner = push_subscription_pruner
         self.fcm_credentials = fcm_credentials
         self.fcm_token_loader = fcm_token_loader
         self.recipient_models = recipient_models or {}
         self.route_prefix = route_prefix
 
         self._configured = True
-        self._redis_client = None
-
         return self
+
+    def _set_redis_connection_pool(
+        self,
+        pool: redis.ConnectionPool | None,
+    ) -> None:
+        self._redis_connection_pool = pool
+        if pool is None:
+            self._redis_connection_pool_kwargs = None
+            return
+
+        self._redis_connection_pool_kwargs = {
+            **pool.connection_kwargs,
+            "connection_class": pool.connection_class,
+            "encoder_class": pool.encoder_class,
+            "max_connections": pool.max_connections,
+        }
+
+    def _create_redis_client_from_pool(self) -> redis.Redis | None:
+        if self._redis_connection_pool_kwargs is None:
+            return None
+
+        try:
+            pool = redis.ConnectionPool(**self._redis_connection_pool_kwargs)
+            client = redis.Redis(
+                connection_pool=pool,
+                decode_responses=False,
+            )
+            logger.debug(
+                "NotificationRegistry: Redis client created from connection pool"
+            )
+            return client
+        except Exception as exc:
+            logger.error(
+                "NotificationRegistry: failed to create Redis client: %s",
+                exc,
+                exc_info=True,
+            )
+            return None
 
     @property
     def is_configured(self) -> bool:
@@ -148,37 +160,17 @@ class NotificationRegistry:
         each access so it can be safely used inside the current event loop.
         """
 
-        if self._redis_connection_pool is not None:
-            try:
-                if self._redis_connection_pool_kwargs is not None:
-                    pool = redis.ConnectionPool(
-                        **self._redis_connection_pool_kwargs,
-                    )
-                else:
-                    pool = self._redis_connection_pool
+        if self._redis_connection_pool_kwargs is not None:
+            return self._create_redis_client_from_pool()
+        
+        if self._redis_client is None:
+            self._redis_client = self._redis
+            logger.debug(
+                "NotificationRegistry: Redis client created from existing instance"
+            )
 
-                client = redis.Redis(
-                    connection_pool=pool,
-                    decode_responses=False,
-                )
-                logger.debug(
-                    "NotificationRegistry: Redis client created from connection pool"
-                )
-                return client
-            except Exception as exc:
-                logger.error(
-                    "NotificationRegistry: failed to create Redis client: %s",
-                    exc,
-                    exc_info=True,
-                )
-                return None
-
-        if self._redis is not None:
-            if self._redis_client is None:
-                self._redis_client = self._redis
-                logger.debug(
-                    "NotificationRegistry: Redis client created from existing instance"
-                )
+        if self._redis is None:
+            return None
 
         return self._redis_client
 
