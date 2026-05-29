@@ -29,10 +29,14 @@ def _ensure_prometheus_multiproc_dir(app_name: str) -> str:
 
         return env_dir
 
-    default_dir = os.path.join(tempfile.gettempdir(), f"{app_name}_prometheus_multiproc")
+    default_dir = os.path.join(
+        tempfile.gettempdir(), f"{app_name}_prometheus_multiproc"
+    )
     os.makedirs(default_dir, exist_ok=True)
 
-    sentinel_path = os.path.join(default_dir, f".{app_name}_prometheus_multiproc_initialized")
+    sentinel_path = os.path.join(
+        default_dir, f".{app_name}_prometheus_multiproc_initialized"
+    )
     if not os.path.exists(sentinel_path):
         logger.warning(
             f"PROMETHEUS_MULTIPROC_DIR was not set; auto-created {default_dir}."
@@ -76,6 +80,13 @@ def configure_prometheus(
     for metric in cfg.custom_metrics:
         name = getattr(metric, "_name", None) or str(metric)
         metrics_registry.register(name, metric)
+
+        if cfg.registry is not None:
+            try:
+                cfg.registry.register(metric)
+            except ValueError as e:
+                if "Collector already registered" not in str(e):
+                    raise
 
     instrumentator_kwargs: dict[str, Any] = {
         "should_group_status_codes": cfg.should_group_status_codes,

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Union
 
 from prometheus_client import CollectorRegistry
+from prometheus_client.registry import Collector
 
 
 @dataclass
@@ -73,5 +74,5 @@ class PrometheusMetricsConfig:
     multiprocess_mode: bool = False
     registry: Optional[CollectorRegistry] = None
 
-    custom_metrics: List[object] = field(default_factory=list)
+    custom_metrics: List[Collector] = field(default_factory=list)
     include_app_name_label: bool = False
