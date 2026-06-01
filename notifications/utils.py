@@ -8,12 +8,8 @@ from py_vapid.utils import b64urlencode
 
 from lib.notifications.config import get_registry
 from lib.notifications.constants import SSE_CHANNEL_PREFIX
+from lib.notifications.emitter import EventEmitter
 from lib.notifications.exceptions import NotificationNotConfigured
-
-try:
-    from redis.exceptions import RedisError
-except ImportError:  # pragma: no cover
-    RedisError = Exception
 
 
 def channel_key(prefix: str, recipient_id: Any) -> str:
@@ -54,7 +50,10 @@ def load_url_safe_vapid_public_key(path: str | Path, format: Literal["base64", "
     return b64urlencode(raw_key)
 
 
-async def subscribe_sse(recipient_id: Any) -> AsyncIterator[dict[str, Any]]:
+async def subscribe_sse(
+    recipient_id: Any,
+    event_emitter: EventEmitter,
+) -> AsyncIterator[dict[str, Any]]:
     """
     Async generator that yields SSE event dictionaries for a recipient.
 
@@ -62,53 +61,21 @@ async def subscribe_sse(recipient_id: Any) -> AsyncIterator[dict[str, Any]]:
 
         from sse_starlette.sse import EventSourceResponse
         from lib.notifications.utils import subscribe_sse
+        from lib.notifications.config import get_registry
 
         @router.get("/notifications/stream")
         async def stream(user = Depends(require_auth)):
-            return EventSourceResponse(subscribe_sse(user.id))
+            emitter = get_registry().event_emitter
+            return EventSourceResponse(subscribe_sse(user.id, emitter))
 
     EventSourceResponse will serialize these event dictionaries into valid
     SSE messages and handle keepalive pings automatically.
     """
 
-    redis = get_registry().redis
-    if redis is None:
-        raise NotificationNotConfigured(
-            "SSETransport: no Redis client configured. " "Pass redis_url= to configure_notifications()."
-        )
-
     channel = channel_key(SSE_CHANNEL_PREFIX, recipient_id)
 
-    async with redis.pubsub() as pubsub:
-        try:
-            await pubsub.subscribe(channel)
-        except RedisError as exc:
-            raise NotificationNotConfigured(
-                "SSETransport: Redis unavailable when subscribing to notification stream."
-            ) from exc
-
-        try:
-            while True:
-                try:
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True)
-                except RedisError as exc:
-                    raise NotificationNotConfigured(
-                        "SSETransport: Redis unavailable while reading notification stream."
-                    ) from exc
-
-                if msg is None:
-                    await asyncio.sleep(0.01)
-                    continue
-
-                if msg["type"] == "message":
-                    data = msg["data"]
-                    if isinstance(data, bytes):
-                        data = data.decode()
-
-                    yield {"data": data}
-
-        finally:
-            await pubsub.unsubscribe(channel)
+    async for message in event_emitter.subscribe(channel):
+        yield {"data": message}
 
 
 def send_fcm_push(

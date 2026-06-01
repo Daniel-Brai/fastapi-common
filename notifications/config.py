@@ -1,5 +1,6 @@
 from typing import Any, Callable
 
+from lib.notifications.event_emitter import EventEmitter
 from lib.notifications.registry import NotificationRegistry, notification_registry
 from lib.notifications.schemas import VAPIDClaims
 from lib.notifications.types import DBEngine, PushSubscriptionLoader, PushSubscriptionPruner
@@ -8,8 +9,7 @@ from lib.notifications.types import DBEngine, PushSubscriptionLoader, PushSubscr
 def configure_notifications(
     engine: DBEngine | None = None,
     *,
-    redis: Any | None = None,
-    redis_connection_pool: Any = None,
+    event_emitter: EventEmitter | None = None,
     vapid_private_key: str | None = None,
     vapid_claims: VAPIDClaims | None = None,
     push_subscription_loader: PushSubscriptionLoader | None = None,
@@ -27,10 +27,13 @@ def configure_notifications(
     engine: DBEngine | None
         SQLAlchemy engine used by DatabaseTransport to persist notifications.
         Optional when database delivery is not used.
-    redis: Any | None
-        Optional Redis client instance to use for transport locking and pub/sub.
-    redis_connection_pool: Any | None
-        Optional Redis connection pool to use instead of creating a new one from ``redis_url``.
+    event_emitter: EventEmitter | None
+        Pub/sub backend for real‑time SSE notifications.
+        If `None` (default), an **unbounded in‑memory** emitter is used.
+        Create other emitters using:
+          - `EventEmitter.from_redis(redis_client)`
+          - `EventEmitter.from_redis_pool(connection_pool)`
+          - `EventEmitter.memory(maxsize=...)` (bounded in‑memory)
     vapid_private_key: str | None
         VAPID private key (PEM string or path to PEM file) used by WebPushTransport for push delivery.
     vapid_claims: VAPIDClaims | None
@@ -54,25 +57,36 @@ def configure_notifications(
 
     Examples
     --------
-    Basic application setup:
+    Basic application setup with Redis:
+
+        from lib.notifications.event_emitter import EventEmitter
+        import redis.asyncio as redis
+
+        redis_client = redis.from_url("redis://localhost")
+        emitter = EventEmitter.from_redis(redis_client)
 
         configure_notifications(
             engine=engine,
-            redis_url=settings.REDIS_URL,
-            fcm_credentials=open("path/to/fcm_credentials.json") # or path representing credentials or the credentials object itself
+            event_emitter=emitter,
+            fcm_credentials="path/to/fcm_credentials.json",
             fcm_token_loader=lambda user: user.fcm_tokens,
             recipient_models={"User": User},
         )
 
-        # With connection pool:
-        pool = redis.ConnectionPool.from_url(settings.REDIS_URL, max_connections=20)
-        configure_notifications(
-            engine=engine,
-            redis_connection_pool=pool,
-            fcm_credentials=open("path/to/fcm_credentials.json"),
-            fcm_token_loader=lambda user: user.fcm_tokens,
-            recipient_models={"User": User},
-        )
+    With a Redis connection pool:
+
+        pool = redis.ConnectionPool.from_url("redis://localhost", max_connections=20)
+        emitter = EventEmitter.from_redis_pool(pool)
+        configure_notifications(engine=engine, event_emitter=emitter, ...)
+
+    In memory unbounded (default, no configuration needed):
+
+        configure_notifications(engine=engine, recipient_models={"User": User})
+
+    In memory bounded (max 100 queued messages per subscriber):
+
+        emitter = EventEmitter.memory(maxsize=100)
+        configure_notifications(engine=engine, event_emitter=emitter, ...)
 
     Define a notification with multiple transports:
 
@@ -89,7 +103,6 @@ def configure_notifications(
 
             def to_notification(self):
                 from notifications.message import NotificationMessage
-
                 return NotificationMessage(
                     title=f"New message from {self.sender_name}",
                     body=self.text[:100],
@@ -135,15 +148,13 @@ def configure_notifications(
             transports = [
                 DatabaseTransport(),
                 SSETransport(),
-                WebPushTransport(if_=lambda u: not u.preferences.get("allow_push_notifications", False)), # where u is the recipient user instance
+                WebPushTransport(if_=lambda u: not u.preferences.get("allow_push_notifications", False)),
             ]
-        ```
     """
 
     return notification_registry.configure_notifications(
         engine,
-        redis=redis,
-        redis_connection_pool=redis_connection_pool,
+        event_emitter=event_emitter,
         vapid_private_key=vapid_private_key,
         vapid_claims=vapid_claims,
         push_subscription_loader=push_subscription_loader,
@@ -154,26 +165,16 @@ def configure_notifications(
         route_prefix=route_prefix,
     )
 
-
 def get_registry() -> NotificationRegistry:
     """
-    Get the singleton `NotificationRegistry` instance.
-
-    Raises RuntimeError if the registry has not been configured yet.
+    Get the singleton NotificationRegistry instance.
     """
-
     notification_registry.assert_configured()
-
     return notification_registry
-
 
 def get_router_prefix() -> str:
     """
     Get the route prefix for the notifications API router.
-
-    Raises RuntimeError if the registry has not been configured yet.
     """
-
     notification_registry.assert_configured()
-
     return notification_registry.route_prefix

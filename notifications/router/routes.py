@@ -120,24 +120,17 @@ def get_notifications_router(
         from lib.notifications.config import get_registry
         from lib.notifications.utils import subscribe_sse
 
-        redis = get_registry().redis
-        if redis is None:
+        registry = get_registry()
+        emitter = registry.event_emitter
+        
+        if emitter is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Notification stream unavailable: Redis not configured.",
+                detail="Notification stream unavailable: no event emitter configured or available.",
             )
 
-        try:
-            await redis.ping()
-        except Exception as exc:
-            logger.error("Notification stream unavailable: Redis unreachable: %s", exc)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Notification stream unavailable: Redis unreachable.",
-            ) from exc
-
         return EventSourceResponse(
-            subscribe_sse(user.id),
+            subscribe_sse(user.id, emitter),
             ping=30,
             headers={"X-Accel-Buffering": "no"},
         )
