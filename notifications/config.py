@@ -1,6 +1,6 @@
 from typing import Any, Callable
 
-from lib.notifications.event_emitter import EventEmitter
+from lib.notifications.emitter import EventEmitter
 from lib.notifications.registry import NotificationRegistry, notification_registry
 from lib.notifications.schemas import VAPIDClaims
 from lib.notifications.types import DBEngine, PushSubscriptionLoader, PushSubscriptionPruner
