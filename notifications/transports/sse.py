@@ -21,7 +21,7 @@ class SSETransport(AbstractTransport):
     Use this transport together with DatabaseTransport so recipients can fetch
     missed notifications when they reconnect.
 
-    Requires configure_notifications(redis_url=...) to provide a Redis client.
+    Requires configure_notifications(event_emitter=...) to provide an EventEmitter.
 
     Examples:
 
@@ -33,7 +33,7 @@ class SSETransport(AbstractTransport):
 
         @router.get("/notifications/stream")
         async def stream(user=Depends(make_auth_dependency(get_backend()))):
-            return EventSourceResponse(subscribe_sse(user.id))
+            return EventSourceResponse(subscribe_sse(user.id, get_registry().event_emitter))
     """
 
     name = "sse"
@@ -46,10 +46,11 @@ class SSETransport(AbstractTransport):
         params: dict[str, Any] | None = None,
     ) -> None:
 
-        redis = get_registry().redis
-        if redis is None:
+        event_emitter = get_registry().event_emitter
+        if event_emitter is None:
             logger.warning(
-                "SSETransport: no Redis client configured — skipping. " "Pass redis_url= to configure_notifications()."
+                "SSETransport: no event emitter configured — skipping. "
+                "Pass event_emitter= to configure_notifications()."
             )
             return
 
@@ -61,7 +62,7 @@ class SSETransport(AbstractTransport):
             payload["notification_id"] = record.id
 
         try:
-            await redis.publish(channel, json.dumps(payload))
+            await event_emitter.publish(channel, json.dumps(payload))
             logger.debug("SSETransport: published to %s", channel)
         except Exception as exc:
             logger.error("SSETransport: publish failed: %s", exc, exc_info=True)
