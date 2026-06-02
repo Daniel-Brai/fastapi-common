@@ -25,10 +25,14 @@ class RedisEventEmitter(EventEmitter):
 
         raise RuntimeError("RedisEventEmitter: no client or pool provided")
 
+    def _owns_client(self) -> bool:
+        return self._client is None and self._pool is not None
+
     def subscribe(self, channel: str) -> AsyncIterator[Any]:
         async def gen():
             client = await self._get_client()
             pubsub = client.pubsub()
+            
             await pubsub.subscribe(channel)
 
             try:
@@ -49,8 +53,16 @@ class RedisEventEmitter(EventEmitter):
                 await pubsub.unsubscribe(channel)
                 await pubsub.close()
 
+                if self._owns_client():
+                    await client.aclose()
+
         return gen()
 
     async def publish(self, channel: str, message: Any) -> None:
         client = await self._get_client()
-        await client.publish(channel, message)
+
+        try:
+            await client.publish(channel, message)
+        finally:
+            if self._owns_client():
+                await client.aclose()
