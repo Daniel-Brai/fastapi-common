@@ -131,7 +131,7 @@ def get_notifications_router(
 
         return EventSourceResponse(
             subscribe_sse(user.id, emitter),
-            ping=30,
+            ping=60,
             headers={"X-Accel-Buffering": "no"},
         )
 
