@@ -1,5 +1,3 @@
-import redis.asyncio as redis
-
 from .memory import InMemoryEventEmitter
 from .redis import RedisEventEmitter
 
