@@ -3,39 +3,32 @@ import redis.asyncio as redis
 from .memory import InMemoryEventEmitter
 from .redis import RedisEventEmitter
 
-def redis_emitter_from_client(client: redis.Redis) -> RedisEventEmitter:
+
+def redis_emitter_from_url(url: str, **pool_kwargs) -> RedisEventEmitter:
     """
-    Create a `RedisEventEmitter` from an existing Redis client instance.
+    Create a RedisEventEmitter that can safely be used from any event loop.
+
+    This is the recommended way to configure Redis-based SSE notifications.
 
     Example usage::
 
-        import redis.asyncio as redis
-        from lib.notifications.emitter import redis_emitter_from_client
+        from lib.notifications.emitter import redis_emitter_from_url
 
-        redis_client = redis.from_url("redis://localhost")
-        emitter = redis_emitter_from_client(redis_client)
-        configure_notifications(engine=engine, event_emitter=emitter, ...)
+        event_emitter = redis_emitter_from_url(
+            str(settings.APP_REDIS_URL),
+            max_connections=20,
+            socket_timeout=10.0,
+            socket_connect_timeout=10.0,
+            health_check_interval=30,
+            retry=Retry(...),
+            decode_responses=False,
+        )
+
+        configure_notifications(engine=engine, event_emitter=event_emitter, ...)
     """
 
-    return RedisEventEmitter(redis_client=client)
+    return RedisEventEmitter(url=url, **pool_kwargs)
 
-
-def redis_emitter_from_pool(pool: redis.ConnectionPool) -> RedisEventEmitter:
-    """
-    Create a `RedisEventEmitter` from an existing Redis connection pool.
-
-    Example usage::
-
-        import redis.asyncio as redis
-        from lib.notifications.emitter import redis_emitter_from_pool
-
-        pool = redis.ConnectionPool.from_url("redis://localhost", max_connections=20)
-        emitter = redis_emitter_from_pool(pool)
-
-        configure_notifications(engine=engine, event_emitter=emitter, ...)
-    """
-
-    return RedisEventEmitter(connection_pool=pool)
 
 
 def in_memory_emitter(maxsize: int | None = None) -> InMemoryEventEmitter:

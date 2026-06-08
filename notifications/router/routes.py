@@ -126,7 +126,7 @@ def get_notifications_router(
         if emitter is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Notification stream unavailable: no event emitter configured or available.",
+                detail="Notification stream unavagilable: no event emitter configured or available.",
             )
 
         return EventSourceResponse(

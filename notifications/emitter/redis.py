@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, AsyncIterator
+from weakref import WeakKeyDictionary
 
 import redis.asyncio as redis
 
@@ -7,32 +7,33 @@ from .base import EventEmitter
 
 
 class RedisEventEmitter(EventEmitter):
+    """
+    Redis backend event emitter for notifications
+    """
 
     def __init__(
         self,
-        redis_client: redis.Redis | None = None,
-        connection_pool: redis.ConnectionPool | None = None,
+        *,
+        url: str,
+        **pool_kwargs,
     ):
-        self._client = redis_client
-        self._pool = connection_pool
+        self._url = url
+        self._pool_kwargs = pool_kwargs
+        self._loop_clients: WeakKeyDictionary = WeakKeyDictionary()
 
     async def _get_client(self) -> redis.Redis:
-        if self._client is not None:
-            return self._client
+        loop = asyncio.get_running_loop()
+        if loop in self._loop_clients:
+            return self._loop_clients[loop]
 
-        if self._pool is not None:
-            return redis.Redis(connection_pool=self._pool, decode_responses=False)
+        client = redis.Redis.from_url(self._url, **self._pool_kwargs)
+        self._loop_clients[loop] = client
+        return client
 
-        raise RuntimeError("RedisEventEmitter: no client or pool provided")
-
-    def _owns_client(self) -> bool:
-        return self._client is None and self._pool is not None
-
-    def subscribe(self, channel: str) -> AsyncIterator[Any]:
+    def subscribe(self, channel: str):
         async def gen():
             client = await self._get_client()
             pubsub = client.pubsub()
-            
             await pubsub.subscribe(channel)
 
             try:
@@ -47,22 +48,13 @@ class RedisEventEmitter(EventEmitter):
 
                         if isinstance(data, bytes):
                             data = data.decode()
-
                         yield data
             finally:
                 await pubsub.unsubscribe(channel)
                 await pubsub.close()
 
-                if self._owns_client():
-                    await client.aclose()
-
         return gen()
 
-    async def publish(self, channel: str, message: Any) -> None:
+    async def publish(self, channel: str, message: str) -> None:
         client = await self._get_client()
-
-        try:
-            await client.publish(channel, message)
-        finally:
-            if self._owns_client():
-                await client.aclose()
+        await client.publish(channel, message)

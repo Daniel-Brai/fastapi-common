@@ -1,5 +1,5 @@
 from typing import Any, Callable
-
+ 
 from lib.notifications.emitter import EventEmitter
 from lib.notifications.registry import NotificationRegistry, notification_registry
 from lib.notifications.schemas import VAPIDClaims
